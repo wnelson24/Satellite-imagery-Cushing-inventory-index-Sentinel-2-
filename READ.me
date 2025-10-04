@@ -1,0 +1,36 @@
+🛰️ Sentinel-2 Crude Oil Storage – From Brightness to Barrels
+Goal: Estimate weekly crude inventories at Cushing, OK using Sentinel-2 imagery + OpenCV tank detection.
+Core idea: Floating-roof tanks change their apparent roof/annulus brightness as fill levels change. We aggregate per-tank brightness into a hub-level index and map that monotonic signal to inventory (mbbl).
+This repository contains: data pipeline, tank detection, brightness index construction, and a transparent conversion from brightness → barrels (no black-box ML required).
+How it Works (high level)
+Fetch imagery: Pull the least-cloudy Sentinel-2 image covering Cushing each week (10m pixels; 5-day revisit; harmonized collection).
+Detect tanks: Use OpenCV Hough circle transform to identify circular tank roofs (typical crude tanks ≈40–100m diameter).
+Measure brightness: For each detected tank, compute the mean grayscale reflectance over the roof mask.
+Build index: Combine per-tank values into a hub brightness index for that week.
+Convert to storage: Apply a monotonic mapping to translate brightness → estimated inventory (mbbl), using a simple, explainable transform that can be calibrated to historical DOE/EIA data when desired.
+Data & AOI
+Satellite: Sentinel-2 (ESA Copernicus) via Earth Engine
+Collection: COPERNICUS/S2_HARMONIZED (bands: B4/B3/B2 for RGB visualization; 10m)
+Area of Interest: Cushing crude hub, 5 km buffer centered at (~-96.765, 35.985)
+Pipeline Steps
+Imagery
+For each weekly window, query S2 images within [t-7d, t], sort by CLOUDY_PIXEL_PERCENTAGE, take the first.
+Request a scaled thumbnail (RGB, min=0, max=3000, dimensions≈512) to ensure usable contrast.
+Tank Detection (OpenCV)
+Convert to grayscale → blur → HoughCircles.
+Parameters (sane defaults; tune by site/date):
+dp=1.2, minDist=20, param1=50, param2=20–30, minRadius=3–6, maxRadius=20–30 (at 10m/pixel).
+For each circle, build a binary mask and compute mean(gray[mask]).
+Brightness Index (weekly)
+Define the hub index as an area-weighted or unweighted mean of per-tank brightness:
+
+ : default 1 (uniform). Optionally use tank roof area if radii are reliable.
+Fallbacks & QC
+If no circles detected (clouds, glare, snow): use full-image mean as a fallback and flag with circles_detected=0.
+Drop weeks with very few detections (e.g., circles_detected < 20) or treat as lower-confidence points.
+Optional: cloud mask via QA band to reduce false brightness (see “Cloud/Lighting Handling” below).
+The Conversion: Brightness → Inventory (mbbl)
+We want a transparent, monotonic mapping from brightness (0–255) to inventory (e.g., 20–80 mbbl range for Cushing). Darker roofs (lower brightness) generally indicate higher fill; brighter roofs → lower fill.
+A. Heuristic Invert-Log Scaling (default, no labels needed)
+This transform spreads values near the bright end (to avoid saturation) and keeps the mapping monotonic and explainable.
+Normalize brightness to 0–1:
